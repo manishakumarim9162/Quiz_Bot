@@ -441,4 +441,24 @@ def main():
             DESCRIPTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_desc), CommandHandler("skip", receive_desc)],
             PRE_MSG_OR_Q: [CommandHandler("undo", handle_undo), CommandHandler("done", finish_quiz_creation), MessageHandler(filters.TEXT & ~filters.COMMAND, receive_pre_msg)],
             QUESTIONS: [CommandHandler("undo", handle_undo), CommandHandler("done", finish_quiz_creation), MessageHandler(filters.POLL, receive_poll)],
-            
+            TIMER: [
+                CallbackQueryHandler(save_timer_and_finalize, pattern="^time_"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_timer_text)
+            ]
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+    )
+    
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(new_quiz_handler)
+    app.add_handler(CallbackQueryHandler(handle_group_join, pattern="^join_"))
+    app.add_handler(CallbackQueryHandler(launch_group_quiz, pattern="^run_"))
+    app.add_handler(CallbackQueryHandler(edit_quiz_menu, pattern="^edit_"))
+    app.add_handler(CallbackQueryHandler(back_to_summary, pattern="^backto_"))
+    app.add_handler(PollAnswerHandler(track_poll_answers))
+    
+    print("🚀 Advanced Telegram Quiz-Bot UI Active...")
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
