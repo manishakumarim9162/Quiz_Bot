@@ -61,7 +61,7 @@ init_db()
 # Global dictionary for active group games memory
 GROUP_GAMES = {}
 
-(TITLE, DESCRIPTION, PRE_MSG_OR_Q, QUESTIONS, TIMER) = range(5)
+(TITLE, DESCRIPTION, QUESTIONS, TIMER) = range(4)
 
 async def new_quiz_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text(
@@ -123,29 +123,14 @@ async def receive_title(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 async def receive_desc(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     text = update.message.text
     context.user_data["quiz_build"]["description"] = "" if text.lower() == "/skip" else text
-    keyboard = [["➕ Create a Question"]]
     await update.message.reply_text(
         f"Good. Your quiz '{context.user_data['quiz_build']['title']}' now has 0 questions. If you made a mistake, send /undo.\n\n"
-        "Now send the next question – or some text or media that will be shown before it.",
-        reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
+        "💡 **Sawal jodne ke liye:**\nClick on 📎 (Attachment) -> Select **Poll**.\n"
+        "Enable **Quiz Mode**, add 2-7 options, pick the correct one, and tap Create.\n\n"
+        "Send /done when finished adding questions.",
+        reply_markup=ReplyKeyboardRemove()
     )
-    return PRE_MSG_OR_Q
-
-async def receive_pre_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    text = update.message.text
-    if text == "➕ Create a Question":
-        await update.message.reply_text(
-            "💡 **Sawal jodne ke liye:**\nClick on 📎 (Attachment) -> Select **Poll**.\n"
-            "Enable **Quiz Mode**, add 2-7 options, pick the correct one, and tap Create.",
-            reply_markup=ReplyKeyboardRemove()
-        )
-        return QUESTIONS
-    context.user_data["temp_pre_msg"] = text
-    await update.message.reply_text(
-        "Great! Now use the button to send me the question related to this message.\nIf sent by mistake, send /undo.",
-        reply_markup=ReplyKeyboardMarkup([["➕ Create a Question"]], resize_keyboard=True)
-    )
-    return PRE_MSG_OR_Q
+    return QUESTIONS
 
 async def receive_poll(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     poll = update.message.poll
@@ -159,25 +144,31 @@ async def receive_poll(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     opts = [o.text for o in poll.options]
     q_data = {
         "text": poll.question, "options": opts, "correct": opts[poll.correct_option_id],
-        "explanation": poll.explanation if poll.explanation else "", "pre_message": context.user_data.get("temp_pre_msg", "")
+        "explanation": poll.explanation if poll.explanation else "", "pre_message": ""
     }
-    context.user_data.pop("temp_pre_msg", None)
     context.user_data["quiz_build"]["questions"].append(q_data)
     
     await update.message.reply_text(
-        f"Good. Your quiz now has {len(context.user_data['quiz_build']['questions'])} question(s). Send next question or /done to finish.",
-        reply_markup=ReplyKeyboardMarkup([["➕ Create a Question"]], resize_keyboard=True)
+        f"✅ Question added! Your quiz now has {len(context.user_data['quiz_build']['questions'])} question(s).\n\n"
+        "Send next question or /done to finish."
     )
-    return PRE_MSG_OR_Q
+    return QUESTIONS
 
 async def handle_undo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     quiz = context.user_data.get("quiz_build")
     if quiz and quiz["questions"]:
         quiz["questions"].pop()
-    await update.message.reply_text("↩️ Last item removed. Send next or /done.", reply_markup=ReplyKeyboardMarkup([["➕ Create a Question"]], resize_keyboard=True))
-    return PRE_MSG_OR_Q
+        await update.message.reply_text(f"↩️ Last question removed! Quiz now has {len(quiz['questions'])} question(s).\n\nSend next question or /done.")
+    else:
+        await update.message.reply_text("❌ No questions to remove!")
+    return QUESTIONS
 
 async def finish_quiz_creation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    quiz = context.user_data.get("quiz_build", {})
+    if not quiz or not quiz.get("questions"):
+        await update.message.reply_text("❌ Error: Quiz must have at least 1 question!")
+        return QUESTIONS
+    
     await update.message.reply_text(
         "⏱️ **Please set a time limit for questions:**\n\n"
         "Type any of these: 15, 30, 40, 60\n\n"
@@ -475,7 +466,6 @@ def main():
         states={
             TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_title)],
             DESCRIPTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_desc), CommandHandler("skip", receive_desc)],
-            PRE_MSG_OR_Q: [CommandHandler("undo", handle_undo), CommandHandler("done", finish_quiz_creation), MessageHandler(filters.TEXT & ~filters.COMMAND, receive_pre_msg)],
             QUESTIONS: [CommandHandler("undo", handle_undo), CommandHandler("done", finish_quiz_creation), MessageHandler(filters.POLL, receive_poll)],
             TIMER: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_timer_text)
