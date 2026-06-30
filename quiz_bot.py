@@ -20,6 +20,15 @@ OWNER_ID = int(os.getenv("OWNER_ID")) if os.getenv("OWNER_ID") else None
 
 DB_FILE = "quiz_bot.db"
 
+def escape_markdown(text):
+    """Escape special characters for Telegram Markdown"""
+    if not text:
+        return text
+    special_chars = ['_', '*', '[', ']', '(', ')', '~', '`']
+    for char in special_chars:
+        text = text.replace(char, f'\\{char}')
+    return text
+
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
@@ -87,8 +96,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         init_text = (
             f"🏁 **Quiz Setup Ready!**\n\n"
-            f"📚 **Title:** {title}\n"
-            f"ℹ️ **Description:** {desc if desc else 'No description'}\n"
+            f"📚 **Title:** {escape_markdown(title)}\n"
+            f"ℹ️ **Description:** {escape_markdown(desc) if desc else 'No description'}\n"
             f"🙋‍♂️ **Questions:** {total_q[0]}\n"
             f"⏱ **Time per question:** {time_disp}\n\n"
             "⚠️ *Khelne ke liye kam se kam 2 users ka join karna zaroori hai!*"
@@ -169,20 +178,21 @@ async def handle_undo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     return PRE_MSG_OR_Q
 
 async def finish_quiz_creation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    keyboard = [
-        [InlineKeyboardButton("15 sec", callback_data="time_15"), InlineKeyboardButton("30 sec", callback_data="time_30")],
-        [InlineKeyboardButton("1 min", callback_data="time_60"), InlineKeyboardButton("2 min", callback_data="time_120")]
-    ]
-    await update.message.reply_text("⏱️ **Please set a time limit for questions:**\n\nOr type: 15, 30, 60, 120", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+    await update.message.reply_text(
+        "⏱️ **Please set a time limit for questions:**\n\n"
+        "Type any of these: 15, 30, 40, 60\n\n"
+        "Example: Type '30' for 30 seconds per question",
+        reply_markup=ReplyKeyboardRemove()
+    )
     return TIMER
 
 async def handle_timer_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     text = update.message.text.strip()
     logging.info("handle_timer_text called; text=%s user=%s", text, update.message.from_user.id if update.message and update.message.from_user else None)
-    time_map = {"15": 15, "30": 30, "60": 60, "120": 120}
+    time_map = {"15": 15, "30": 30, "40": 40, "60": 60}
     
     if text not in time_map:
-        await update.message.reply_text("❌ Invalid time. Please enter: 15, 30, 60, or 120")
+        await update.message.reply_text("❌ Invalid time. Please enter: 15, 30, 40, or 60")
         return TIMER
     
     t_sec = time_map[text]
@@ -212,48 +222,6 @@ async def handle_timer_text(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     await show_summary_panel_text(update, context, qid)
     return ConversationHandler.END
 
-async def save_timer_and_finalize(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query
-    logging.info("save_timer_and_finalize called; callback_data=%s from_user=%s", query.data if query else None, query.from_user.id if query and query.from_user else None)
-    await query.answer()
-
-    # Guard: only allow the quiz creator (if known) to finalize timer
-    creator_id = context.user_data.get("quiz_build_creator_id")
-    if creator_id and query.from_user and query.from_user.id != creator_id:
-        await query.answer("Only the quiz creator can set the timer.", show_alert=True)
-        return
-
-    t_sec = int(query.data.split("_")[1])
-    quiz = context.user_data.get("quiz_build") or {}
-    
-    if not quiz or not quiz.get("title"):
-        await query.answer("❌ Error: Quiz data missing.", show_alert=True)
-        return ConversationHandler.END
-    
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute("INSERT INTO quizzes (creator_id, title, description, timer) VALUES (?, ?, ?, ?)", (query.from_user.id, quiz.get("title", ""), quiz.get("description", ""), t_sec))
-    qid = cursor.lastrowid
-    for q in quiz.get("questions", []):
-        cursor.execute("INSERT INTO questions (quiz_id, question_text, options, correct_answer, explanation, pre_message) VALUES (?, ?, ?, ?, ?, ?)", 
-                       (qid, q.get("text"), json.dumps(q.get("options", [])), q.get("correct"), q.get("explanation"), q.get("pre_message")))
-    conn.commit()
-    conn.close()
-
-    # Clear user_data after successful save
-    context.user_data.pop("quiz_build", None)
-    context.user_data.pop("quiz_build_creator_id", None)
-
-    # Remove inline buttons to avoid duplicate clicks / confusion
-    try:
-        await query.message.edit_reply_markup(None)
-    except Exception:
-        pass
-    
-    logging.info("Timer set for quiz_id=%s by user=%s (button click)", qid, query.from_user.id)
-    await show_summary_panel(query, context, qid)
-    return ConversationHandler.END
-
 async def show_summary_panel(query, context, quiz_id):
     try:
         conn = sqlite3.connect(DB_FILE)
@@ -275,10 +243,13 @@ async def show_summary_panel(query, context, quiz_id):
         time_display = f"{timer} sec" if timer < 60 else f"{timer // 60} min"
         bot_username = context.bot.username
         
+        # Escape markdown special characters
+        escaped_title = escape_markdown(title)
+        
         summary_text = (
             "👍 **Quiz created.**\n\n"
             "🏁 Here's your quiz:\n"
-            f"📚 *\"{title}\"*\n"
+            f"📚 {escaped_title}\n"
             f"🙋‍♂️ {total_q[0]} question(s)  ·  ⏱ Time: {time_display}\n\n"
             f"🔗 **External sharing link:**\n"
             f"https://t.me/{bot_username}?start=quiz_{quiz_id}"
@@ -317,10 +288,13 @@ async def show_summary_panel_text(update, context, quiz_id):
         time_display = f"{timer} sec" if timer < 60 else f"{timer // 60} min"
         bot_username = context.bot.username
         
+        # Escape markdown special characters
+        escaped_title = escape_markdown(title)
+        
         summary_text = (
             "👍 **Quiz created.**\n\n"
             "🏁 Here's your quiz:\n"
-            f"📚 *\"{title}\"*\n"
+            f"📚 {escaped_title}\n"
             f"🙋‍♂️ {total_q[0]} question(s)  ·  ⏱ Time: {time_display}\n\n"
             f"🔗 **External sharing link:**\n"
             f"https://t.me/{bot_username}?start=quiz_{quiz_id}"
@@ -427,7 +401,7 @@ async def send_next_group_poll(chat_id, context):
     correct_idx = options.index(correct_ans)
     
     if pre_msg:
-        await context.bot.send_message(chat_id=chat_id, text=f"📢 *Context:* {pre_msg}", parse_mode="Markdown")
+        await context.bot.send_message(chat_id=chat_id, text=f"📢 *Context:* {escape_markdown(pre_msg)}", parse_mode="Markdown")
         await asyncio.sleep(1)
 
     game["start_time"] = datetime.now()
@@ -504,7 +478,6 @@ def main():
             PRE_MSG_OR_Q: [CommandHandler("undo", handle_undo), CommandHandler("done", finish_quiz_creation), MessageHandler(filters.TEXT & ~filters.COMMAND, receive_pre_msg)],
             QUESTIONS: [CommandHandler("undo", handle_undo), CommandHandler("done", finish_quiz_creation), MessageHandler(filters.POLL, receive_poll)],
             TIMER: [
-                CallbackQueryHandler(save_timer_and_finalize, pattern="^time_"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_timer_text)
             ]
         },
