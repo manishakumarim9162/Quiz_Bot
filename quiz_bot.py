@@ -337,11 +337,21 @@ async def handle_group_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
     quiz_id = query.data.split("_")[1]
     
     if chat_id not in GROUP_GAMES:
-        GROUP_GAMES[chat_id] = {"quiz_id": quiz_id, "joined_users": {}, "current_q": 0, "scores": {}, "poll_map": {}, "start_time": None}
+        GROUP_GAMES[chat_id] = {
+            "quiz_id": quiz_id, 
+            "joined_users": {}, 
+            "current_q": 0, 
+            "scores": {}, 
+            "poll_map": {}, 
+            "start_time": None,
+            "user_answers": {},  # Track all answers per user
+            "question_start_times": {}  # Track when each question started
+        }
         
     game = GROUP_GAMES[chat_id]
     game["joined_users"][user_id] = f"@{user_name}" if query.from_user.username else user_name
     game["scores"][user_id] = {"score": 0, "total_time": 0.0}
+    game["user_answers"][user_id] = {}  # Store answers for this user
     
     joined_count = len(game["joined_users"])
     names_list = ", ".join(game["joined_users"].values())
@@ -397,6 +407,9 @@ async def send_next_group_poll(chat_id, context):
         await context.bot.send_message(chat_id=chat_id, text=f"📢 Context: {pre_msg}")
         await asyncio.sleep(1)
 
+    # Record question start time
+    game["question_start_times"][game["current_q"]] = datetime.now()
+    
     game["start_time"] = datetime.now()
     poll_msg = await context.bot.send_poll(
         chat_id=chat_id, question=f"❓ Q ({game['current_q'] + 1}/{len(questions)}): {q_text}",
@@ -404,33 +417,90 @@ async def send_next_group_poll(chat_id, context):
         explanation=explanation if explanation else None, is_anonymous=False
     )
     
-    game["poll_map"][poll_msg.poll.id] = {"correct_idx": correct_idx, "chat_id": chat_id}
+    # Store poll info with correct answer
+    game["poll_map"][poll_msg.poll.id] = {
+        "correct_idx": correct_idx, 
+        "chat_id": chat_id,
+        "correct_answer": correct_ans,
+        "question_index": game["current_q"]
+    }
+    
+    logging.info(f"Poll {poll_msg.poll.id} sent for question {game['current_q']} in chat {chat_id}")
     
     await asyncio.sleep(timer[0])
     game["current_q"] += 1
     await send_next_group_poll(chat_id, context)
 
 async def track_poll_answers(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Track poll answers in real-time"""
     ans = update.poll_answer
     pid = ans.poll_id
     uid = ans.user.id
     
+    logging.info(f"Poll answer received: poll_id={pid}, user_id={uid}, options={ans.option_ids}")
+    
     for cid, game in list(GROUP_GAMES.items()):
         if pid in game["poll_map"]:
-            c_idx = game["poll_map"][pid]["correct_idx"]
-            if uid in game["scores"] and ans.option_ids:
-                chosen = ans.option_ids
-                if chosen == [c_idx]:
-                    elapsed = (datetime.now() - game["start_time"]).total_seconds()
-                    game["scores"][uid]["score"] += 1
-                    game["scores"][uid]["total_time"] += elapsed
+            poll_info = game["poll_map"][pid]
+            correct_idx = poll_info["correct_idx"]
+            question_idx = poll_info["question_index"]
+            
+            if uid in game["user_answers"]:
+                # Store the user's answer for this question
+                game["user_answers"][uid][question_idx] = {
+                    "selected": ans.option_ids,
+                    "correct_idx": correct_idx,
+                    "timestamp": datetime.now()
+                }
+                
+                logging.info(f"Stored answer for user {uid}: {ans.option_ids} (correct: {correct_idx})")
 
 async def compile_group_leaderboard(chat_id, context):
+    """Calculate final leaderboard based on tracked answers"""
     game = GROUP_GAMES.get(chat_id)
-    if not game: return
+    if not game: 
+        return
     
-    # sort by score desc, then total_time asc (faster is better). Ensure key extraction works.
-    sorted_scores = sorted(game["scores"].items(), key=lambda item: (item[1]["score"], -item[1]["total_time"]), reverse=True)[:20]
+    # Get quiz questions to calculate correct answers
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("SELECT question_text, options, correct_answer FROM questions WHERE quiz_id = ?", (game["quiz_id"],))
+    questions = cursor.fetchall()
+    conn.close()
+    
+    # Build correct answers list
+    correct_answers = {}
+    for idx, (q_text, options_json, correct_ans) in enumerate(questions):
+        options = json.loads(options_json)
+        correct_idx = options.index(correct_ans)
+        correct_answers[idx] = correct_idx
+    
+    # Calculate scores based on tracked answers
+    final_scores = {}
+    for uid, user_answers in game["user_answers"].items():
+        score = 0
+        total_time = 0.0
+        
+        for question_idx, answer_data in user_answers.items():
+            # Check if answer is correct
+            if answer_data["selected"] == [correct_answers.get(question_idx, -1)]:
+                score += 1
+                # Calculate time taken for this question
+                start_time = game["question_start_times"].get(question_idx, answer_data["timestamp"])
+                if isinstance(start_time, datetime):
+                    elapsed = (answer_data["timestamp"] - start_time).total_seconds()
+                    total_time += elapsed
+        
+        final_scores[uid] = {"score": score, "total_time": total_time}
+    
+    logging.info(f"Final scores for chat {chat_id}: {final_scores}")
+    
+    # Update game scores
+    for uid, score_data in final_scores.items():
+        game["scores"][uid] = score_data
+    
+    # Sort by score desc, then total_time asc
+    sorted_scores = sorted(game["scores"].items(), key=lambda item: (-item[1]["score"], item[1]["total_time"]))[:20]
     board = "🏆 FINAL QUIZ LEADERBOARD (Top 20) 🏆\n\n"
     
     if not sorted_scores or len(game["joined_users"]) == 0:
