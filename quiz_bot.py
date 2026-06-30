@@ -237,12 +237,13 @@ async def show_summary_panel(query, context, quiz_id):
         # Escape markdown special characters
         escaped_title = escape_markdown(title)
         
+        # Don't use parse_mode for URLs - build without markdown for the link
         summary_text = (
-            "👍 **Quiz created.**\n\n"
+            "👍 Quiz created.\n\n"
             "🏁 Here's your quiz:\n"
             f"📚 {escaped_title}\n"
-            f"🙋‍♂️ {total_q[0]} question(s)  ·  ⏱ Time: {time_display}\n\n"
-            f"🔗 **External sharing link:**\n"
+            f"🙋‍♂️ {total_q[0]} question(s) · ⏱ Time: {time_display}\n\n"
+            f"🔗 External sharing link:\n"
             f"https://t.me/{bot_username}?start=quiz_{quiz_id}"
         )
         
@@ -253,7 +254,7 @@ async def show_summary_panel(query, context, quiz_id):
             [InlineKeyboardButton("⚙️ Edit quiz", callback_data=f"edit_{quiz_id}"), InlineKeyboardButton("📊 Quiz status", callback_data=f"status_{quiz_id}")]
         ]
         reply_markup = InlineKeyboardMarkup(inline_keyboard)
-        await query.message.reply_text(summary_text, reply_markup=reply_markup, parse_mode="Markdown")
+        await query.message.reply_text(summary_text, reply_markup=reply_markup)
     except Exception as e:
         logging.error(f"Error in show_summary_panel: {e}")
         await query.message.reply_text(f"❌ Error: {str(e)}")
@@ -282,12 +283,13 @@ async def show_summary_panel_text(update, context, quiz_id):
         # Escape markdown special characters
         escaped_title = escape_markdown(title)
         
+        # Don't use parse_mode for URLs - build without markdown for the link
         summary_text = (
-            "👍 **Quiz created.**\n\n"
+            "👍 Quiz created.\n\n"
             "🏁 Here's your quiz:\n"
             f"📚 {escaped_title}\n"
-            f"🙋‍♂️ {total_q[0]} question(s)  ·  ⏱ Time: {time_display}\n\n"
-            f"🔗 **External sharing link:**\n"
+            f"🙋‍♂️ {total_q[0]} question(s) · ⏱ Time: {time_display}\n\n"
+            f"🔗 External sharing link:\n"
             f"https://t.me/{bot_username}?start=quiz_{quiz_id}"
         )
         
@@ -298,7 +300,7 @@ async def show_summary_panel_text(update, context, quiz_id):
             [InlineKeyboardButton("⚙️ Edit quiz", callback_data=f"edit_{quiz_id}"), InlineKeyboardButton("📊 Quiz status", callback_data=f"status_{quiz_id}")]
         ]
         reply_markup = InlineKeyboardMarkup(inline_keyboard)
-        await update.message.reply_text(summary_text, reply_markup=reply_markup, parse_mode="Markdown")
+        await update.message.reply_text(summary_text, reply_markup=reply_markup)
     except Exception as e:
         logging.error(f"Error in show_summary_panel_text: {e}")
         await update.message.reply_text(f"❌ Error: {str(e)}")
@@ -392,7 +394,7 @@ async def send_next_group_poll(chat_id, context):
     correct_idx = options.index(correct_ans)
     
     if pre_msg:
-        await context.bot.send_message(chat_id=chat_id, text=f"📢 *Context:* {escape_markdown(pre_msg)}", parse_mode="Markdown")
+        await context.bot.send_message(chat_id=chat_id, text=f"📢 Context: {pre_msg}")
         await asyncio.sleep(1)
 
     game["start_time"] = datetime.now()
@@ -429,7 +431,7 @@ async def compile_group_leaderboard(chat_id, context):
     
     # sort by score desc, then total_time asc (faster is better). Ensure key extraction works.
     sorted_scores = sorted(game["scores"].items(), key=lambda item: (item[1]["score"], -item[1]["total_time"]), reverse=True)[:20]
-    board = "🏆 **FINAL QUIZ LEADERBOARD (Top 20)** 🏆\n\n"
+    board = "🏆 FINAL QUIZ LEADERBOARD (Top 20) 🏆\n\n"
     
     if not sorted_scores or len(game["joined_users"]) == 0:
         board += "Nobody answered or participated in this quiz. 🤷‍♂️"
@@ -445,12 +447,12 @@ async def compile_group_leaderboard(chat_id, context):
             elif idx == 3: medal = "🥉"
             else: medal = f"{idx}."
                 
-            board += f"{medal} {user_obj} — ⭐ *{score}* Sahi (⏱ {total_time} sec)\n"
+            board += f"{medal} {user_obj} — ⭐ {score} Sahi (⏱ {total_time} sec)\n"
             
         share_text = f"Maine Laado Quiz Bot me participate kiya aur top players me rank banayi! 🔥"
         kb = [[InlineKeyboardButton("📢 Share Score / Results", url=f"https://t.me/share/url?url={share_text}")]]
         
-    await context.bot.send_message(chat_id=chat_id, text=board, reply_markup=InlineKeyboardMarkup(kb) if kb else None, parse_mode="Markdown")
+    await context.bot.send_message(chat_id=chat_id, text=board, reply_markup=InlineKeyboardMarkup(kb) if kb else None)
     GROUP_GAMES.pop(chat_id, None)
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
