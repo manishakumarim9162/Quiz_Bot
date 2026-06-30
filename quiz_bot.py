@@ -186,7 +186,11 @@ async def handle_timer_text(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return TIMER
     
     t_sec = time_map[text]
-    quiz = context.user_data["quiz_build"]
+    quiz = context.user_data.get("quiz_build", {})
+    
+    if not quiz or not quiz.get("title"):
+        await update.message.reply_text("❌ Error: Quiz data missing. Please start over with /newquiz")
+        return ConversationHandler.END
     
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
@@ -198,6 +202,12 @@ async def handle_timer_text(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     conn.commit()
     conn.close()
     
+    # Clear user_data after successful save
+    context.user_data.pop("quiz_build", None)
+    context.user_data.pop("quiz_build_creator_id", None)
+    
+    # Send confirmation message
+    await update.message.reply_text("✅ Timer set! Creating your quiz summary...")
     await show_summary_panel_text(update, context, qid)
     return ConversationHandler.END
 
@@ -215,6 +225,10 @@ async def save_timer_and_finalize(update: Update, context: ContextTypes.DEFAULT_
     t_sec = int(query.data.split("_")[1])
     quiz = context.user_data.get("quiz_build") or {}
     
+    if not quiz or not quiz.get("title"):
+        await query.answer("❌ Error: Quiz data missing.", show_alert=True)
+        return ConversationHandler.END
+    
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute("INSERT INTO quizzes (creator_id, title, description, timer) VALUES (?, ?, ?, ?)", (query.from_user.id, quiz.get("title", ""), quiz.get("description", ""), t_sec))
@@ -225,12 +239,17 @@ async def save_timer_and_finalize(update: Update, context: ContextTypes.DEFAULT_
     conn.commit()
     conn.close()
 
+    # Clear user_data after successful save
+    context.user_data.pop("quiz_build", None)
+    context.user_data.pop("quiz_build_creator_id", None)
+
     # Remove inline buttons to avoid duplicate clicks / confusion
     try:
         await query.message.edit_reply_markup(None)
     except Exception:
         pass
     
+    await query.answer("✅ Timer set! Creating your quiz...")
     await show_summary_panel(query, context, qid)
     return ConversationHandler.END
 
