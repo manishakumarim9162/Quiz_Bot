@@ -59,7 +59,9 @@ async def new_quiz_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         "Let's create a new quiz. First, send me the title of your quiz (e.g., 'Aptitude Test' or '10 questions about bears').",
         reply_markup=ReplyKeyboardRemove()
     )
+    # store builder + creator id so callback handlers can verify permissions
     context.user_data["quiz_build"] = {"title": "", "description": "", "questions": []}
+    context.user_data["quiz_build_creator_id"] = update.message.from_user.id
     return TITLE
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -176,6 +178,7 @@ async def finish_quiz_creation(update: Update, context: ContextTypes.DEFAULT_TYP
 
 async def handle_timer_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     text = update.message.text.strip()
+    logging.info("handle_timer_text called; text=%s user=%s", text, update.message.from_user.id if update.message and update.message.from_user else None)
     time_map = {"15": 15, "30": 30, "60": 60, "120": 120}
     
     if text not in time_map:
@@ -200,19 +203,33 @@ async def handle_timer_text(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 async def save_timer_and_finalize(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
+    logging.info("save_timer_and_finalize called; callback_data=%s from_user=%s", query.data if query else None, query.from_user.id if query and query.from_user else None)
     await query.answer()
+
+    # Guard: only allow the quiz creator (if known) to finalize timer
+    creator_id = context.user_data.get("quiz_build_creator_id")
+    if creator_id and query.from_user and query.from_user.id != creator_id:
+        await query.answer("Only the quiz creator can set the timer.", show_alert=True)
+        return
+
     t_sec = int(query.data.split("_")[1])
-    quiz = context.user_data["quiz_build"]
+    quiz = context.user_data.get("quiz_build") or {}
     
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    cursor.execute("INSERT INTO quizzes (creator_id, title, description, timer) VALUES (?, ?, ?, ?)", (query.from_user.id, quiz["title"], quiz["description"], t_sec))
+    cursor.execute("INSERT INTO quizzes (creator_id, title, description, timer) VALUES (?, ?, ?, ?)", (query.from_user.id, quiz.get("title", ""), quiz.get("description", ""), t_sec))
     qid = cursor.lastrowid
-    for q in quiz["questions"]:
+    for q in quiz.get("questions", []):
         cursor.execute("INSERT INTO questions (quiz_id, question_text, options, correct_answer, explanation, pre_message) VALUES (?, ?, ?, ?, ?, ?)", 
-                       (qid, q["text"], json.dumps(q["options"]), q["correct"], q["explanation"], q["pre_message"]))
+                       (qid, q.get("text"), json.dumps(q.get("options", [])), q.get("correct"), q.get("explanation"), q.get("pre_message")))
     conn.commit()
     conn.close()
+
+    # Remove inline buttons to avoid duplicate clicks / confusion
+    try:
+        await query.message.edit_reply_markup(None)
+    except Exception:
+        pass
     
     await show_summary_panel(query, context, qid)
     return ConversationHandler.END
@@ -401,7 +418,8 @@ async def compile_group_leaderboard(chat_id, context):
     game = GROUP_GAMES.get(chat_id)
     if not game: return
     
-    sorted_scores = sorted(game["scores"].items(), key=lambda x: (x["score"], -x["total_time"]), reverse=True)[:20]
+    # sort by score desc, then total_time asc (faster is better). Ensure key extraction works.
+    sorted_scores = sorted(game["scores"].items(), key=lambda item: (item[1]["score"], -item[1]["total_time"]), reverse=True)[:20]
     board = "🏆 **FINAL QUIZ LEADERBOARD (Top 20)** 🏆\n\n"
     
     if not sorted_scores or len(game["joined_users"]) == 0:
@@ -451,6 +469,10 @@ def main():
     
     app.add_handler(CommandHandler("start", start))
     app.add_handler(new_quiz_handler)
+
+    # Ensure time callbacks are handled even if ConversationHandler routing is missed
+    app.add_handler(CallbackQueryHandler(save_timer_and_finalize, pattern="^time_"))
+
     app.add_handler(CallbackQueryHandler(handle_group_join, pattern="^join_"))
     app.add_handler(CallbackQueryHandler(launch_group_quiz, pattern="^run_"))
     app.add_handler(CallbackQueryHandler(edit_quiz_menu, pattern="^edit_"))
