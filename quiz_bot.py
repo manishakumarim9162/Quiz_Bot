@@ -208,6 +208,7 @@ async def handle_timer_text(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     
     # Send confirmation message
     await update.message.reply_text("✅ Timer set! Creating your quiz summary...")
+    logging.info("Timer set for quiz_id=%s by user=%s", qid, update.message.from_user.id)
     await show_summary_panel_text(update, context, qid)
     return ConversationHandler.END
 
@@ -249,69 +250,93 @@ async def save_timer_and_finalize(update: Update, context: ContextTypes.DEFAULT_
     except Exception:
         pass
     
-    await query.answer("✅ Timer set! Creating your quiz...")
+    logging.info("Timer set for quiz_id=%s by user=%s (button click)", qid, query.from_user.id)
     await show_summary_panel(query, context, qid)
     return ConversationHandler.END
 
 async def show_summary_panel(query, context, quiz_id):
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute("SELECT title, timer FROM quizzes WHERE quiz_id = ?", (quiz_id,))
-    title, timer = cursor.fetchone()
-    cursor.execute("SELECT COUNT(*) FROM questions WHERE quiz_id = ?", (quiz_id,))
-    total_q = cursor.fetchone()
-    conn.close()
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute("SELECT title, timer FROM quizzes WHERE quiz_id = ?", (quiz_id,))
+        quiz_data = cursor.fetchone()
+        
+        if not quiz_data:
+            logging.error(f"Quiz {quiz_id} not found in database!")
+            await query.message.reply_text("❌ Error: Quiz data could not be retrieved.")
+            conn.close()
+            return
+        
+        title, timer = quiz_data
+        cursor.execute("SELECT COUNT(*) FROM questions WHERE quiz_id = ?", (quiz_id,))
+        total_q = cursor.fetchone()
+        conn.close()
 
-    time_display = f"{timer} sec" if timer < 60 else f"{timer // 60} min"
-    bot_username = context.bot.username
-    
-    summary_text = (
-        "👍 **Quiz created.**\n\n"
-        "🏁 Here's your quiz:\n"
-        f"📚 *\"{title}\"*\n"
-        f"🙋‍♂️ {total_q[0]} question(s)  ·  ⏱ Time: {time_display}\n\n"
-        f"🔗 **External sharing link:**\n"
-        f"https://t.me/{bot_username}?start=quiz_{quiz_id}"
-    )
-    
-    inline_keyboard = [
-        [InlineKeyboardButton("🏁 Start this quiz", callback_data=f"start_{quiz_id}")],
-        [InlineKeyboardButton("👥 Start quiz in group", url=f"https://t.me/{bot_username}?startgroup=quiz_{quiz_id}")],
-        [InlineKeyboardButton("📢 Share quiz", url=f"https://t.me/share/url?url=https://t.me/{bot_username}?start=quiz_{quiz_id}")],
-        [InlineKeyboardButton("⚙️ Edit quiz", callback_data=f"edit_{quiz_id}"), InlineKeyboardButton("📊 Quiz status", callback_data=f"status_{quiz_id}")]
-    ]
-    reply_markup = InlineKeyboardMarkup(inline_keyboard)
-    await query.message.reply_text(summary_text, reply_markup=reply_markup, parse_mode="Markdown")
+        time_display = f"{timer} sec" if timer < 60 else f"{timer // 60} min"
+        bot_username = context.bot.username
+        
+        summary_text = (
+            "👍 **Quiz created.**\n\n"
+            "🏁 Here's your quiz:\n"
+            f"📚 *\"{title}\"*\n"
+            f"🙋‍♂️ {total_q[0]} question(s)  ·  ⏱ Time: {time_display}\n\n"
+            f"🔗 **External sharing link:**\n"
+            f"https://t.me/{bot_username}?start=quiz_{quiz_id}"
+        )
+        
+        inline_keyboard = [
+            [InlineKeyboardButton("🏁 Start this quiz", callback_data=f"start_{quiz_id}")],
+            [InlineKeyboardButton("👥 Start quiz in group", url=f"https://t.me/{bot_username}?startgroup=quiz_{quiz_id}")],
+            [InlineKeyboardButton("📢 Share quiz", url=f"https://t.me/share/url?url=https://t.me/{bot_username}?start=quiz_{quiz_id}")],
+            [InlineKeyboardButton("⚙️ Edit quiz", callback_data=f"edit_{quiz_id}"), InlineKeyboardButton("📊 Quiz status", callback_data=f"status_{quiz_id}")]
+        ]
+        reply_markup = InlineKeyboardMarkup(inline_keyboard)
+        await query.message.reply_text(summary_text, reply_markup=reply_markup, parse_mode="Markdown")
+    except Exception as e:
+        logging.error(f"Error in show_summary_panel: {e}")
+        await query.message.reply_text(f"❌ Error: {str(e)}")
 
 async def show_summary_panel_text(update, context, quiz_id):
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute("SELECT title, timer FROM quizzes WHERE quiz_id = ?", (quiz_id,))
-    title, timer = cursor.fetchone()
-    cursor.execute("SELECT COUNT(*) FROM questions WHERE quiz_id = ?", (quiz_id,))
-    total_q = cursor.fetchone()
-    conn.close()
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute("SELECT title, timer FROM quizzes WHERE quiz_id = ?", (quiz_id,))
+        quiz_data = cursor.fetchone()
+        
+        if not quiz_data:
+            logging.error(f"Quiz {quiz_id} not found in database!")
+            await update.message.reply_text("❌ Error: Quiz data could not be retrieved.")
+            conn.close()
+            return
+        
+        title, timer = quiz_data
+        cursor.execute("SELECT COUNT(*) FROM questions WHERE quiz_id = ?", (quiz_id,))
+        total_q = cursor.fetchone()
+        conn.close()
 
-    time_display = f"{timer} sec" if timer < 60 else f"{timer // 60} min"
-    bot_username = context.bot.username
-    
-    summary_text = (
-        "👍 **Quiz created.**\n\n"
-        "🏁 Here's your quiz:\n"
-        f"📚 *\"{title}\"*\n"
-        f"🙋‍♂️ {total_q[0]} question(s)  ·  ⏱ Time: {time_display}\n\n"
-        f"🔗 **External sharing link:**\n"
-        f"https://t.me/{bot_username}?start=quiz_{quiz_id}"
-    )
-    
-    inline_keyboard = [
-        [InlineKeyboardButton("🏁 Start this quiz", callback_data=f"start_{quiz_id}")],
-        [InlineKeyboardButton("👥 Start quiz in group", url=f"https://t.me/{bot_username}?startgroup=quiz_{quiz_id}")],
-        [InlineKeyboardButton("📢 Share quiz", url=f"https://t.me/share/url?url=https://t.me/{bot_username}?start=quiz_{quiz_id}")],
-        [InlineKeyboardButton("⚙️ Edit quiz", callback_data=f"edit_{quiz_id}"), InlineKeyboardButton("📊 Quiz status", callback_data=f"status_{quiz_id}")]
-    ]
-    reply_markup = InlineKeyboardMarkup(inline_keyboard)
-    await update.message.reply_text(summary_text, reply_markup=reply_markup, parse_mode="Markdown")
+        time_display = f"{timer} sec" if timer < 60 else f"{timer // 60} min"
+        bot_username = context.bot.username
+        
+        summary_text = (
+            "👍 **Quiz created.**\n\n"
+            "🏁 Here's your quiz:\n"
+            f"📚 *\"{title}\"*\n"
+            f"🙋‍♂️ {total_q[0]} question(s)  ·  ⏱ Time: {time_display}\n\n"
+            f"🔗 **External sharing link:**\n"
+            f"https://t.me/{bot_username}?start=quiz_{quiz_id}"
+        )
+        
+        inline_keyboard = [
+            [InlineKeyboardButton("🏁 Start this quiz", callback_data=f"start_{quiz_id}")],
+            [InlineKeyboardButton("👥 Start quiz in group", url=f"https://t.me/{bot_username}?startgroup=quiz_{quiz_id}")],
+            [InlineKeyboardButton("📢 Share quiz", url=f"https://t.me/share/url?url=https://t.me/{bot_username}?start=quiz_{quiz_id}")],
+            [InlineKeyboardButton("⚙️ Edit quiz", callback_data=f"edit_{quiz_id}"), InlineKeyboardButton("📊 Quiz status", callback_data=f"status_{quiz_id}")]
+        ]
+        reply_markup = InlineKeyboardMarkup(inline_keyboard)
+        await update.message.reply_text(summary_text, reply_markup=reply_markup, parse_mode="Markdown")
+    except Exception as e:
+        logging.error(f"Error in show_summary_panel_text: {e}")
+        await update.message.reply_text(f"❌ Error: {str(e)}")
 
 async def edit_quiz_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -488,9 +513,6 @@ def main():
     
     app.add_handler(CommandHandler("start", start))
     app.add_handler(new_quiz_handler)
-
-    # Ensure time callbacks are handled even if ConversationHandler routing is missed
-    app.add_handler(CallbackQueryHandler(save_timer_and_finalize, pattern="^time_"))
 
     app.add_handler(CallbackQueryHandler(handle_group_join, pattern="^join_"))
     app.add_handler(CallbackQueryHandler(launch_group_quiz, pattern="^run_"))
